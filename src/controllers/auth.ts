@@ -2,8 +2,8 @@ import { Request, Response } from "express";
 import { signinSchenma } from "../utils/types";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-const JWT_SECRET = "2121";
 import { PrismaClient } from "@prisma/client";
+const JWT_SECRET = "2121";
 const prisma = new PrismaClient();
 
 //signup funciton
