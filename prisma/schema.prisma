@@ -12,12 +12,24 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
-
 model User {
-  id       Int      @id @default(autoincrement())
+  id       String   @id @default(uuid())
+  username String   @unique @default("default_username")  // Add default value
   email    String   @unique
-  password String
+  password String    
+  location Location?
+
   createdAt DateTime @default(now())
+
+  @@unique([email, username]) // Composite unique constraint
+}
+
+model Location {
+  id        String  @id @default(uuid())
+  userId    String  @unique
+  latitude  Decimal
+  longitude Decimal
   updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
