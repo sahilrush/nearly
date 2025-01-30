@@ -10,7 +10,7 @@ class WebSocketService {
 
   private constructor() {
     this.wss = new WebSocket.Server({ port: 8000 });
-    this.setupListeners(); // ✅ Ensure WebSocket starts listening
+    this.setupListeners(); // Ensure WebSocket starts listening
   }
 
   public static getInstance(): WebSocketService {
@@ -22,7 +22,7 @@ class WebSocketService {
 
   private setupListeners() {
     this.wss.on("connection", (ws) => {
-      // ✅ Fixed event name
+      //  Fixed event name
       console.log("Client connected");
 
       ws.on("message", (message: any) => this.handleMessage(ws, message));
@@ -37,20 +37,20 @@ class WebSocketService {
       if (data.type === "update_location") {
         const { userId, latitude, longitude } = data;
 
-        // ✅ Store the WebSocket connection for this user
+        //  Store the WebSocket connection for this user
         this.clients.set(userId, ws);
 
-        // ✅ Update user location in the database
+        //  Update user location in the database
         await prisma.location.upsert({
           where: { userId },
           update: { latitude, longitude, updatedAt: new Date() },
           create: { userId, latitude, longitude },
         });
 
-        // ✅ Find nearby users
+        //  Find nearby users
         const nearbyUsers = await this.findNearbyUsers(latitude, longitude, 10);
 
-        // ✅ Notify nearby users
+        // Notify nearby users
         nearbyUsers.forEach((user: { id: string }) => {
           const client = this.clients.get(user.id);
           if (client) {

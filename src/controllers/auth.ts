@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { signinSchenma } from "../utils/types"; // Ensure this schema is properly defined and validated
+import { signinSchenma, signupSchema } from "../utils/types"; // Ensure this schema is properly defined and validated
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
 // Signup function
 export async function signUp(req: Request, res: Response) {
   try {
-    const { email, password } = signinSchenma.parse(req.body); // Ensure proper validation with zod or similar library
+    const { email, password, username } = signupSchema.parse(req.body); // Ensure proper validation with zod or similar library
 
     // Check if user already exists
     const userExists = await prisma.user.findUnique({ where: { email } });
@@ -27,14 +27,16 @@ export async function signUp(req: Request, res: Response) {
     await prisma.user.create({
       data: {
         email,
+        username,
         password: hashedPassword,
       },
     });
 
     res.status(201).json({ message: "User Registered Successfully" });
   } catch (err) {
-    console.error("Signup error:", err); // Log the error for debugging
-    res.status(500).json({ err: "Internal server error" });
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Internal server error" });
+    return
   }
 }
 
