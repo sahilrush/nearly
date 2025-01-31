@@ -24,7 +24,7 @@ const prisma = new client_1.PrismaClient();
 function signUp(req, res) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const { email, password } = types_1.signinSchenma.parse(req.body); // Ensure proper validation with zod or similar library
+            const { email, password, username } = types_1.signupSchema.parse(req.body); // Ensure proper validation with zod or similar library
             // Check if user already exists
             const userExists = yield prisma.user.findUnique({ where: { email } });
             if (userExists) {
@@ -37,14 +37,16 @@ function signUp(req, res) {
             yield prisma.user.create({
                 data: {
                     email,
+                    username,
                     password: hashedPassword,
                 },
             });
             res.status(201).json({ message: "User Registered Successfully" });
         }
         catch (err) {
-            console.error("Signup error:", err); // Log the error for debugging
-            res.status(500).json({ err: "Internal server error" });
+            console.error("Signup error:", err);
+            res.status(500).json({ error: "Internal server error" });
+            return;
         }
     });
 }

@@ -16,7 +16,7 @@ model User {
   id       String   @id @default(uuid())
   username String   @unique @default("default_username")  // Add default value
   email    String   @unique
-  password String    
+  password String  
   location Location?
 
   createdAt DateTime @default(now())
