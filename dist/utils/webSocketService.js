@@ -16,12 +16,12 @@ const client_1 = require("@prisma/client");
 const ioredis_1 = __importDefault(require("ioredis"));
 const ws_1 = __importDefault(require("ws"));
 const prisma = new client_1.PrismaClient();
-const redis = new ioredis_1.default();
+const redisClient = new ioredis_1.default();
 class WebSocketService {
     constructor() {
         this.clients = new Map();
         this.wss = new ws_1.default.Server({ port: 8000 });
-        this.setupListeners(); // Ensure WebSocket starts listening
+        this.setupListeners();
     }
     static getInstance() {
         if (!WebSocketService.instance) {
@@ -31,22 +31,33 @@ class WebSocketService {
     }
     setupListeners() {
         this.wss.on("connection", (ws) => {
-            //  Fixed event name
             console.log("Client connected");
-            ws.on("message", (message) => this.handleMessage(ws, message));
-            ws.on("close", () => console.log("Client disconnected"));
-        });
-        // Subscribe to Redis Pub/Sub for proximity updates
-        redis.subscribe("proximity_updates", (err, count) => {
-            if (err)
-                console.error("Redis Sub error", err);
-            console.log(`Sub to ${count} channels.`);
-        });
-        redis.on("message", (channel, message) => {
-            if (channel === "proximity_updates") {
-                const data = JSON.parse(message);
-                this.notifyUser(data.userId, data);
-            }
+            ws.on("message", (message) => {
+                try {
+                    const data = JSON.parse(message.toString());
+                    if (data.type === "register" && data.userId) {
+                        this.clients.set(data.userId, ws);
+                        console.log(`User ${data.userId} registered`);
+                    }
+                    else {
+                        this.handleMessage(ws, message);
+                    }
+                }
+                catch (err) {
+                    console.error("Error processing message:", err);
+                }
+            });
+            ws.on("close", () => {
+                console.log("Client disconnected");
+                Array.from(this.clients.entries()).forEach(([userId, client]) => {
+                    if (client === ws) {
+                        this.clients.delete(userId);
+                        console.log(`User ${userId} removed from tracking`);
+                        // Remove from Redis when user disconnects
+                        redisClient.zrem("user_locations", userId);
+                    }
+                });
+            });
         });
     }
     handleMessage(ws, message) {
@@ -55,42 +66,103 @@ class WebSocketService {
                 const data = JSON.parse(message.toString());
                 if (data.type === "update_location") {
                     const { userId, latitude, longitude } = data;
-                    //store locaiton in geosptial index
-                    yield redis.geoadd("user_locations", longitude, latitude, userId);
-                    const nearbyUser = yield redis.georadius("user_location", longitude, latitude, 10, "m");
-                    //notifying the user via pub/sub
-                    redis.publish("proximity_updates", JSON.stringify({ userId, latitude, longitude }));
-                    const lastLocation = yield prisma.location.findUnique({
-                        where: { userId },
+                    console.log(`Location update from ${userId}`);
+                    const userExists = yield prisma.user.findUnique({
+                        where: { id: userId },
                     });
-                    if (!lastLocation ||
-                        this.hasMovedSignificantly(lastLocation, latitude, longitude)) {
-                        yield prisma.location.upsert({
+                    if (!userExists) {
+                        console.error(`User ${userId} not found in database`);
+                        this.sendToUser(userId, {
+                            type: "error",
+                            message: "user not found",
+                        });
+                        return;
+                    }
+                    // Update Redis geospatial index
+                    yield redisClient.geoadd("user_locations", longitude, latitude, userId);
+                    // Find nearby users within 10 meters
+                    const nearbyUsers = yield redisClient.georadius("user_locations", longitude, latitude, 10, "m");
+                    // Process nearby users
+                    const otherUsers = nearbyUsers
+                        .map((id) => id)
+                        .filter((id) => id !== userId);
+                    if (otherUsers.length > 0) {
+                        console.log(`Found ${otherUsers.length} nearby users for ${userId}`);
+                        // Notify current user about others
+                        this.sendToUser(userId, {
+                            type: "nearby_users",
+                            users: otherUsers,
+                            yourLocation: { latitude, longitude },
+                        });
+                        // Notify other users about current user
+                        otherUsers.forEach((otherUserId) => {
+                            this.sendToUser(otherUserId, {
+                                type: "user_entered_proximity",
+                                userId,
+                                location: { latitude, longitude },
+                            });
+                        });
+                    }
+                    try {
+                        // Update database if significant movement
+                        const lastLocation = yield prisma.location.findUnique({
                             where: { userId },
-                            update: { latitude, longitude, updatedAt: new Date() },
-                            create: { userId, latitude, longitude },
+                        });
+                        const shouldUpdate = !lastLocation ||
+                            this.hasMovedSignificantly(lastLocation
+                                ? {
+                                    latitude: parseFloat(lastLocation.latitude.toString()),
+                                    longitude: parseFloat(lastLocation.longitude.toString()),
+                                }
+                                : null, latitude, longitude);
+                        if (shouldUpdate) {
+                            yield prisma.location.upsert({
+                                where: { userId },
+                                update: {
+                                    latitude: latitude.toString(),
+                                    longitude: longitude.toString(),
+                                    updatedAt: new Date(),
+                                },
+                                create: {
+                                    userId,
+                                    latitude: latitude.toString(),
+                                    longitude: longitude.toString(),
+                                },
+                            });
+                            console.log(`Updated database location for ${userId}`);
+                        }
+                    }
+                    catch (err) {
+                        console.error(`Database failed for user`);
+                        this.sendToUser(userId, {
+                            type: "error",
+                            message: "Failed to update locaition in database",
                         });
                     }
                 }
             }
             catch (err) {
-                console.error("Error processing the message:", err);
+                console.error("Error processing message:", err);
             }
         });
     }
-    notifyUser(userId, data) {
-        this.wss.clients.forEach((client) => {
-            if (client.readyState === ws_1.default.OPEN) {
-                client.send(JSON.stringify(Object.assign({ type: "nearbyUser" }, data)));
-            }
-        });
+    sendToUser(userId, message) {
+        const client = this.clients.get(userId);
+        if (client && client.readyState === ws_1.default.OPEN) {
+            client.send(JSON.stringify(message));
+        }
+        else {
+            console.warn(`User ${userId} not connected - notification skipped`);
+        }
     }
-    hasMovedSignificantly(lastLocation, lat, lon) {
-        const distance = this.harversineDistance(lastLocation.latitude, lastLocation.longitude, lat, lon);
-        return distance > 50;
+    hasMovedSignificantly(lastLocation, newLat, newLon) {
+        if (!lastLocation)
+            return true;
+        const distance = this.haversineDistance(lastLocation.latitude, lastLocation.longitude, newLat, newLon);
+        return distance > 50; // 50 meters threshold
     }
-    harversineDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371e3;
+    haversineDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; // Earth radius in meters
         const φ1 = (lat1 * Math.PI) / 180;
         const φ2 = (lat2 * Math.PI) / 180;
         const Δφ = ((lat2 - lat1) * Math.PI) / 180;
@@ -98,7 +170,7 @@ class WebSocketService {
         const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
             Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c; // Distance in meters
+        return R * c;
     }
 }
 exports.default = WebSocketService.getInstance();
