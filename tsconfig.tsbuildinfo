@@ -1,1 +1,0 @@
-{"root":["./src/index.ts","./src/testclient.ts","./src/controllers/auth.ts","./src/routes/authroutes.ts","./src/utils/types.ts","./src/utils/websocketservice.ts"],"version":"5.7.3"}
