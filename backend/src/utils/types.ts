@@ -1,15 +1,14 @@
-import {z} from "zod"
+import { z } from "zod";
 
 export const signupSchema = z.object({
-  username:z.string().min(3),
-  email:z.string().email(),
-  password:z.string().min(6)
-})
+  username: z.string(),
+  email: z.string().email(),
+  password: z.string(),
+});
 
-export const signinSchenma = z.object({
-  email:z.string().email(),
-  password:z.string()
-})
+export const signinSchema = z.object({
+  email: z.string().email(),
+  password: z.string(),
+});
 
 export type GeoRadiusResponse = [string, string, [string, string]];
-

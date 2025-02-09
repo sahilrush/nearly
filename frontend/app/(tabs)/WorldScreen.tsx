@@ -12,6 +12,10 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
+import { useAuth } from "@/context/AuthContext";
+import { useNavigation } from "@react-navigation/native";
+import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width } = Dimensions.get("window");
 const CIRCLE_SIZE = width * 0.85;
@@ -51,10 +55,10 @@ const createUser = (
   };
 };
 
-
-
 export default function World() {
+  const { logout } = useAuth();
   const animationRef = useRef<number>();
+
   const [users, setUsers] = useState<User[]>([
     createUser(
       "1",
@@ -91,6 +95,10 @@ export default function World() {
     ),
   ]);
 
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem("userToken");
+    router.replace("/auth");
+  };
   const checkCollision = (user1: User, user2: User) => {
     const x1 = Math.cos(user1.currentAngle) * INNER_CIRCLE_RADIUS;
     const y1 = Math.sin(user1.currentAngle) * INNER_CIRCLE_RADIUS;
@@ -164,6 +172,14 @@ export default function World() {
         <Ionicons name="notifications-outline" size={24} color="#fff" />
       </View>
 
+      <TouchableOpacity
+        style={styles.actionButton}
+        onPress={() => {
+          handleLogout();
+        }}
+      >
+        <Text>Logut</Text>
+      </TouchableOpacity>
       <View style={styles.circleContainer}>
         <BlurView intensity={40} tint="dark" style={styles.mainCircle}>
           {users.map((user) => (
@@ -368,4 +384,3 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
 });
-

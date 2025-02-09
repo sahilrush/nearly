@@ -11,7 +11,13 @@ import {
 import * as z from "zod";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAuth } from "@/context/AuthContext";
-import { AuthResponse, SigninData, signinSchema, SignupData, signupSchema } from "@/types/auth";
+import {
+  AuthResponse,
+  SigninData,
+  signinSchema,
+  SignupData,
+  signupSchema,
+} from "@/types/auth";
 
 type RootStackParamList = {
   Auth: undefined;
@@ -38,62 +44,41 @@ const AuthScreen: React.FC<Props> = ({ navigation }) => {
     password: "",
   });
 
-  const API_URL: string = "http://localhost:8000";
+  const API_URL: string = "http://localhost:3000";
 
-  const validateForm = (): boolean => {
-    try {
-      if (isLogin) {
-        signinSchema.parse({
-          email: formData.email,
-          password: formData.password,
-        });
-      } else {
-        signupSchema.parse(formData);
-      }
-      setErrors({});
-      return true;
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        const newErrors: Record<string, string> = {};
-        error.errors.forEach((err) => {
-          if (err.path) {
-            newErrors[err.path[0]] = err.message;
-          }
-        });
-        setErrors(newErrors);
-      }
-      return false;
-    }
-  };
-
-  const handleAuth = async (): Promise<void> => {
-    if (!validateForm()) {
-      return;
-    }
-
+  const handleAuth = async () => {
     try {
       setIsLoading(true);
-      const endpoint: string = isLogin ? "/api/signin" : "/api/signup";
-      const userData: SigninData | SignupData = isLogin
+      console.log("Attempting to sign in..."); // Debugging
+
+      const endpoint = isLogin ? "/auth/signin" : "/auth/signup";
+      const userData = isLogin
         ? { email: formData.email, password: formData.password }
         : formData;
 
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(userData),
       });
 
-      const data: AuthResponse = await response.json();
+      const data = await response.json();
+      console.log("Response:", data); // Debugging
 
       if (response.ok) {
-        await auth.login(data.token);
+        if (isLogin) {
+          console.log("Logging in...");
+          await auth.login(data.token); // Ensure this is working
+        } else {
+          Alert.alert("Success", "Account created! Please sign in.");
+          setIsLogin(true);
+          setFormData({ username: "", email: "", password: "" });
+        }
       } else {
         Alert.alert("Error", data.message);
       }
     } catch (error) {
+      console.error("Auth error:", error);
       Alert.alert("Error", "Something went wrong. Please try again.");
     } finally {
       setIsLoading(false);
@@ -241,7 +226,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
-
-//
 
 export default AuthScreen;
