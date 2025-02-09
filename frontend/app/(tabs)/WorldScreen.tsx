@@ -51,6 +51,8 @@ const createUser = (
   };
 };
 
+
+
 export default function World() {
   const animationRef = useRef<number>();
   const [users, setUsers] = useState<User[]>([
