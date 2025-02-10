@@ -1,1 +1,0 @@
-//locaiton fethcing  from backend

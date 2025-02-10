@@ -11,13 +11,7 @@ import {
 import * as z from "zod";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAuth } from "@/context/AuthContext";
-import {
-  AuthResponse,
-  SigninData,
-  signinSchema,
-  SignupData,
-  signupSchema,
-} from "@/types/auth";
+import { SignupData } from "@/types/auth";
 
 type RootStackParamList = {
   Auth: undefined;
@@ -63,12 +57,12 @@ const AuthScreen: React.FC<Props> = ({ navigation }) => {
       });
 
       const data = await response.json();
-      console.log("Response:", data); // Debugging
+      console.log("Response:", data); 
 
       if (response.ok) {
         if (isLogin) {
           console.log("Logging in...");
-          await auth.login(data.token); // Ensure this is working
+          await auth.login(data.token); 
         } else {
           Alert.alert("Success", "Account created! Please sign in.");
           setIsLogin(true);
@@ -90,7 +84,7 @@ const AuthScreen: React.FC<Props> = ({ navigation }) => {
       ...prev,
       [key]: value,
     }));
-    // Clear error when user starts typing
+
     if (errors[key]) {
       setErrors((prev) => ({
         ...prev,

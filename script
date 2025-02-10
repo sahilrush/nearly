@@ -1,0 +1,269 @@
+// LocationService.ts
+export const WS_URL = 'ws://your-server-ip:your-port'; // Replace with your WebSocket server URL
+
+export interface LocationMessage {
+  type: 'update_location' | 'register';
+  userId: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface NearbyUserMessage {
+  type: 'nearby_users';
+  users: string[];
+  yourLocation: {
+    latitude: number;
+    longitude: number;
+  };
+}
+
+// App.tsx
+import React from 'react';
+import { LocationTracker } from './components/LocationTracker';
+import { NavigationContainer } from '@react-navigation/native';
+
+export default function App() {
+  return (
+    <NavigationContainer>
+      <LocationTracker userId="test-user-1" />
+    </NavigationContainer>
+  );
+}
+
+// components/LocationTracker.tsx
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Alert,
+  Platform,
+  TouchableOpacity,
+} from 'react-native';
+import * as Location from 'expo-location';
+import { WS_URL, LocationMessage } from '../LocationService';
+
+interface Props {
+  userId: string;
+}
+
+export const LocationTracker: React.FC<Props> = ({ userId }) => {
+  const [isConnected, setIsConnected] = useState(false);
+  const [nearbyUsers, setNearbyUsers] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const ws = useRef<WebSocket | null>(null);
+  const locationSubscription = useRef<any>(null);
+
+  useEffect(() => {
+    setupLocation();
+    return () => cleanup();
+  }, []);
+
+  const cleanup = () => {
+    if (locationSubscription.current) {
+      locationSubscription.current.remove();
+    }
+    if (ws.current) {
+      ws.current.close();
+    }
+  };
+
+  const setupLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required');
+        return;
+      }
+
+      // Start location updates
+      locationSubscription.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 5000,
+          distanceInterval: 5,
+        },
+        (location) => {
+          if (ws.current?.readyState === WebSocket.OPEN) {
+            const message: LocationMessage = {
+              type: 'update_location',
+              userId,
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            };
+            ws.current.send(JSON.stringify(message));
+          }
+        }
+      );
+
+      // Initialize WebSocket connection
+      connectWebSocket();
+    } catch (err) {
+      setError('Failed to start location tracking');
+      console.error(err);
+    }
+  };
+
+  const connectWebSocket = () => {
+    try {
+      ws.current = new WebSocket(WS_URL);
+
+      ws.current.onopen = () => {
+        setIsConnected(true);
+        setError(null);
+        
+        // Register user
+        const registerMessage: LocationMessage = {
+          type: 'register',
+          userId,
+        };
+        ws.current?.send(JSON.stringify(registerMessage));
+      };
+
+      ws.current.onclose = () => {
+        setIsConnected(false);
+        // Attempt to reconnect after 5 seconds
+        setTimeout(connectWebSocket, 5000);
+      };
+
+      ws.current.onerror = (e) => {
+        setError('WebSocket connection error');
+        console.error('WebSocket error:', e);
+      };
+
+      ws.current.onmessage = (e) => {
+        try {
+          const message = JSON.parse(e.data);
+          handleWebSocketMessage(message);
+        } catch (err) {
+          console.error('Error parsing message:', err);
+        }
+      };
+    } catch (err) {
+      setError('Failed to connect to server');
+      console.error('WebSocket connection error:', err);
+    }
+  };
+
+  const handleWebSocketMessage = (message: any) => {
+    switch (message.type) {
+      case 'nearby_users':
+        setNearbyUsers(message.users);
+        break;
+      case 'user_entered_proximity':
+        setNearbyUsers(prev => [...prev, message.userId]);
+        break;
+      case 'error':
+        setError(message.message);
+        break;
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.statusContainer}>
+        <Text style={styles.statusText}>
+          Status: {isConnected ? 'Connected' : 'Disconnected'}
+        </Text>
+        <View style={[
+          styles.statusIndicator,
+          isConnected ? styles.connected : styles.disconnected
+        ]} />
+      </View>
+
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
+      <View style={styles.usersContainer}>
+        <Text style={styles.usersTitle}>
+          Nearby Users ({nearbyUsers.length})
+        </Text>
+        {nearbyUsers.map(user => (
+          <View key={user} style={styles.userCard}>
+            <Text style={styles.userText}>{user}</Text>
+          </View>
+        ))}
+      </View>
+
+      <TouchableOpacity
+        style={styles.reconnectButton}
+        onPress={() => {
+          cleanup();
+          setupLocation();
+        }}
+      >
+        <Text style={styles.buttonText}>
+          {isConnected ? 'Connected' : 'Reconnect'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 16,
+    backgroundColor: '#fff',
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  statusText: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  statusIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  connected: {
+    backgroundColor: '#4ade80',
+  },
+  disconnected: {
+    backgroundColor: '#f87171',
+  },
+  errorContainer: {
+    backgroundColor: '#fee2e2',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#dc2626',
+  },
+  usersContainer: {
+    flex: 1,
+  },
+  usersTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  userCard: {
+    backgroundColor: '#f3f4f6',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  userText: {
+    fontSize: 16,
+  },
+  reconnectButton: {
+    backgroundColor: '#3b82f6',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+});

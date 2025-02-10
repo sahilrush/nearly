@@ -15,8 +15,6 @@ import { PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { GeoRadiusResponse } from "./types";
 
-
-
 class WebSocketService {
   private static instance: WebSocketService;
   private wss: WebSocket.Server;
@@ -29,10 +27,12 @@ class WebSocketService {
     this.prisma = new PrismaClient();
     this.redis = new Redis();
     this.wss = new WebSocket.Server({ port: CONFIG.WEBSOCKET_PORT });
+
     this.setupListeners();
     this.setupHeartbeat();
-  }
 
+    console.log(`WebSocket Server started on port ${CONFIG.WEBSOCKET_PORT}`);
+  }
   public static getInstance(): WebSocketService {
     if (!WebSocketService.instance) {
       WebSocketService.instance = new WebSocketService();
@@ -308,7 +308,7 @@ class WebSocketService {
         )
         .map((item: GeoRadiusResponse) => item[0]);
 
-      //notify current user
+      //notifying current user
       if (otherUsers.length > 0) {
         this.sendToUser(userId, {
           type: "nearby_users",
@@ -316,7 +316,7 @@ class WebSocketService {
           yourLocation: { latitude, longitude },
         } as unknown as NearbyUserMessage);
 
-        // Notify other users
+        // Notifying other users
         otherUsers.forEach((otherUserId: string) => {
           this.sendToUser(otherUserId, {
             type: "user_entered_proximity",
@@ -390,7 +390,7 @@ class WebSocketService {
       newLat,
       newLon
     );
-    return distance > 50; // 50 meters threshold
+    return distance > 50;
   }
 
   private haversineDistance(
@@ -399,20 +399,19 @@ class WebSocketService {
     lat2: number,
     lon2: number
   ): number {
-    const R = 6371e3; // Earth radius in meters
-    const φ1 = (lat1 * Math.PI) / 180;
-    const φ2 = (lat2 * Math.PI) / 180;
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+    const R = 6371e3;
+    const a1 = (lat1 * Math.PI) / 180;
+    const a2 = (lat2 * Math.PI) / 180;
+    const a3 = ((lat2 - lat1) * Math.PI) / 180;
+    const a4 = ((lon2 - lon1) * Math.PI) / 180;
 
     const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+      Math.sin(a3 / 2) * Math.sin(a3 / 2) +
+      Math.cos(a1) * Math.cos(a2) * Math.sin(a4 / 2) * Math.sin(a4 / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return R * c;
   }
 }
 
-export default WebSocketService.getInstance();
-
+export default WebSocketService;
