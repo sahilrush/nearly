@@ -25,7 +25,7 @@ export interface NearbyUserMessage extends BaseMessage {
 
 export interface ErrorMessage extends BaseMessage {
   type: "error";
-  message: "string";
+  message: string;
 }
 
 export interface UserProximityMessage extends BaseMessage {

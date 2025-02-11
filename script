@@ -1,269 +1,411 @@
-// LocationService.ts
-export const WS_URL = 'ws://your-server-ip:your-port'; // Replace with your WebSocket server URL
-
-export interface LocationMessage {
-  type: 'update_location' | 'register';
-  userId: string;
-  latitude?: number;
-  longitude?: number;
-}
-
-export interface NearbyUserMessage {
-  type: 'nearby_users';
-  users: string[];
-  yourLocation: {
-    latitude: number;
-    longitude: number;
-  };
-}
-
-// App.tsx
-import React from 'react';
-import { LocationTracker } from './components/LocationTracker';
-import { NavigationContainer } from '@react-navigation/native';
-
-export default function App() {
-  return (
-    <NavigationContainer>
-      <LocationTracker userId="test-user-1" />
-    </NavigationContainer>
-  );
-}
-
-// components/LocationTracker.tsx
-import React, { useEffect, useRef, useState } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  Alert,
-  Platform,
+  Image,
+  Dimensions,
   TouchableOpacity,
-} from 'react-native';
-import * as Location from 'expo-location';
-import { WS_URL, LocationMessage } from '../LocationService';
+  Animated,
+} from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { BlurView } from "expo-blur";
+import { useAuth } from "@/context/AuthContext";
+import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import WebSocketClient from "@/utils/WebsocketClient";
 
-interface Props {
-  userId: string;
+const { width } = Dimensions.get("window");
+const CIRCLE_SIZE = width * 0.85;
+const ITEM_SIZE = 60;
+const INNER_CIRCLE_RADIUS = CIRCLE_SIZE * 0.3;
+
+interface User {
+  id: string;
+  name: string;
+  image: string;
+  distance: string;
+  size: number;
+  angle: Animated.Value;
+  currentAngle: number;
+  speed: number;
+  direction: number;
 }
 
-export const LocationTracker: React.FC<Props> = ({ userId }) => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [nearbyUsers, setNearbyUsers] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const ws = useRef<WebSocket | null>(null);
-  const locationSubscription = useRef<any>(null);
+const createUser = (
+  id: string,
+  name: string,
+  image: string,
+  distance: string,
+  startAngle: number,
+  size = ITEM_SIZE
+): User => {
+  return {
+    id,
+    name,
+    image,
+    distance,
+    size,
+    angle: new Animated.Value(startAngle),
+    currentAngle: startAngle,
+    speed: 0.001 + Math.random() * 0.001,
+    direction: 1,
+  };
+};
+
+export default function World() {
+  const { logout, userId } = useAuth();
+  const animationRef = useRef<number>();
 
   useEffect(() => {
-    setupLocation();
-    return () => cleanup();
-  }, []);
+    if (!userId) return;
+    const wsClient = WebSocketClient.getInstance(
+      userId,
+      "wss://localhost:8080"
+    );
+    wsClient.connect();
 
-  const cleanup = () => {
-    if (locationSubscription.current) {
-      locationSubscription.current.remove();
-    }
-    if (ws.current) {
-      ws.current.close();
-    }
-  };
-
-  const setupLocation = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required');
-        return;
-      }
-
-      // Start location updates
-      locationSubscription.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 5000,
-          distanceInterval: 5,
-        },
-        (location) => {
-          if (ws.current?.readyState === WebSocket.OPEN) {
-            const message: LocationMessage = {
-              type: 'update_location',
-              userId,
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            };
-            ws.current.send(JSON.stringify(message));
-          }
-        }
-      );
-
-      // Initialize WebSocket connection
-      connectWebSocket();
-    } catch (err) {
-      setError('Failed to start location tracking');
-      console.error(err);
-    }
-  };
-
-  const connectWebSocket = () => {
-    try {
-      ws.current = new WebSocket(WS_URL);
-
-      ws.current.onopen = () => {
-        setIsConnected(true);
-        setError(null);
-        
-        // Register user
-        const registerMessage: LocationMessage = {
-          type: 'register',
+    wsClient.setOnNearbyUsersCallback((nearbyUserIds) => {
+      const newUsers = nearbyUserIds.map((userId, index) =>
+        createUser(
           userId,
-        };
-        ws.current?.send(JSON.stringify(registerMessage));
-      };
+          `User ${userId}`,
+          "https://your-default-image-url.com",
+          "nearby",
+          (Math.PI * 2 * index) / nearbyUserIds.length
+        )
+      );
+      setUsers(newUsers);
+    });
+    return () => {
+      wsClient.disconnect();
+    };
+  }, [userId]);
 
-      ws.current.onclose = () => {
-        setIsConnected(false);
-        // Attempt to reconnect after 5 seconds
-        setTimeout(connectWebSocket, 5000);
-      };
+  const [users, setUsers] = useState<User[]>([
+    createUser(
+      "1",
+      "sahil",
+      "https://pbs.twimg.com/profile_images/1862742390190063616/OlJWrU_3_400x400.jpg",
+      "0.5 mi",
+      0,
+      ITEM_SIZE * 0.9
+    ),
+    createUser(
+      "2",
+      "sargam",
+      "https://media.licdn.com/dms/image/v2/D5603AQH9LnII_HXrHQ/profile-displayphoto-shrink_200_200/profile-displayphoto-shrink_200_200/0/1698821079941?e=2147483647&v=beta&t=1XGvRit2_LVRAtb-8y_e9mbtqXF102Ia_fX88-OvEI0",
+      "1.2 mi",
+      Math.PI * 0.4,
+      ITEM_SIZE * 1.1
+    ),
+    createUser(
+      "3",
+      "anurag",
+      "https://pbs.twimg.com/profile_images/1768753668017266688/aPodKd2q_400x400.jpg",
+      "0.8 mi",
+      Math.PI * 0.8,
+      ITEM_SIZE
+    ),
 
-      ws.current.onerror = (e) => {
-        setError('WebSocket connection error');
-        console.error('WebSocket error:', e);
-      };
+    createUser(
+      "5",
+      "pradeep",
+      "https://media.licdn.com/dms/image/v2/D4E03AQGe7iyJ3AC2lg/profile-displayphoto-shrink_200_200/profile-displayphoto-shrink_200_200/0/1715067163067?e=2147483647&v=beta&t=qrLXLcAYF47zsV1t9LXQDq5h7AALUTQqSUkCUjpl_bw",
+      "2.0 mi",
+      Math.PI * 1.6,
+      ITEM_SIZE * 1.05
+    ),
+  ]);
 
-      ws.current.onmessage = (e) => {
-        try {
-          const message = JSON.parse(e.data);
-          handleWebSocketMessage(message);
-        } catch (err) {
-          console.error('Error parsing message:', err);
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem("userToken");
+    router.replace("/auth");
+  };
+  const checkCollision = (user1: User, user2: User) => {
+    const x1 = Math.cos(user1.currentAngle) * INNER_CIRCLE_RADIUS;
+    const y1 = Math.sin(user1.currentAngle) * INNER_CIRCLE_RADIUS;
+    const x2 = Math.cos(user2.currentAngle) * INNER_CIRCLE_RADIUS;
+    const y2 = Math.sin(user2.currentAngle) * INNER_CIRCLE_RADIUS;
+
+    const distance = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+
+    return distance < (user1.size + user2.size) / 2;
+  };
+
+  const updatePositions = () => {
+    const newUsers = users.map((user) => ({
+      ...user,
+      currentAngle: user.currentAngle + user.speed * user.direction,
+    }));
+
+    // Check collisions
+    for (let i = 0; i < newUsers.length; i++) {
+      for (let j = i + 1; j < newUsers.length; j++) {
+        if (checkCollision(newUsers[i], newUsers[j])) {
+          // Reverse directions and slightly adjust speeds
+          newUsers[i].direction *= -1;
+          newUsers[j].direction *= -1;
+          newUsers[i].speed *= 1.1;
+          newUsers[j].speed *= 1.1;
+
+          // Cap the speed
+          newUsers[i].speed = Math.min(newUsers[i].speed, 0.003);
+          newUsers[j].speed = Math.min(newUsers[j].speed, 0.003);
         }
-      };
-    } catch (err) {
-      setError('Failed to connect to server');
-      console.error('WebSocket connection error:', err);
+      }
     }
+
+    // Update animated values
+    newUsers.forEach((user) => {
+      user.angle.setValue(user.currentAngle);
+    });
+
+    setUsers(newUsers);
+    animationRef.current = requestAnimationFrame(updatePositions);
   };
 
-  const handleWebSocketMessage = (message: any) => {
-    switch (message.type) {
-      case 'nearby_users':
-        setNearbyUsers(message.users);
-        break;
-      case 'user_entered_proximity':
-        setNearbyUsers(prev => [...prev, message.userId]);
-        break;
-      case 'error':
-        setError(message.message);
-        break;
-    }
-  };
+  useEffect(() => {
+    animationRef.current = requestAnimationFrame(updatePositions);
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
 
   return (
     <View style={styles.container}>
-      <View style={styles.statusContainer}>
-        <Text style={styles.statusText}>
-          Status: {isConnected ? 'Connected' : 'Disconnected'}
-        </Text>
-        <View style={[
-          styles.statusIndicator,
-          isConnected ? styles.connected : styles.disconnected
-        ]} />
-      </View>
+      <StatusBar style="light" />
 
-      {error && (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      )}
+      <LinearGradient
+        colors={["#FF4B6B", "#7B52AB", "#4568DC"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
 
-      <View style={styles.usersContainer}>
-        <Text style={styles.usersTitle}>
-          Nearby Users ({nearbyUsers.length})
-        </Text>
-        {nearbyUsers.map(user => (
-          <View key={user} style={styles.userCard}>
-            <Text style={styles.userText}>{user}</Text>
-          </View>
-        ))}
+      <View style={[styles.backgroundCircle, styles.circle1]} />
+      <View style={[styles.backgroundCircle, styles.circle2]} />
+      <View style={[styles.backgroundCircle, styles.circle3]} />
+
+      <View style={styles.header}>
+        <Ionicons name="menu" size={24} color="#fff" />
+        <Text style={styles.headerText}>People Nearby</Text>
+        <Ionicons name="notifications-outline" size={24} color="#fff" />
       </View>
 
       <TouchableOpacity
-        style={styles.reconnectButton}
+        style={styles.actionButton}
         onPress={() => {
-          cleanup();
-          setupLocation();
+          handleLogout();
         }}
       >
-        <Text style={styles.buttonText}>
-          {isConnected ? 'Connected' : 'Reconnect'}
-        </Text>
+        <Text>Logut</Text>
       </TouchableOpacity>
+      <View style={styles.circleContainer}>
+        <BlurView intensity={40} tint="dark" style={styles.mainCircle}>
+          {users.map((user) => (
+            <Animated.View
+              key={user.id}
+              style={[
+                styles.userContainer,
+                {
+                  transform: [
+                    {
+                      translateX: user.angle.interpolate({
+                        inputRange: [
+                          0,
+                          Math.PI / 2,
+                          Math.PI,
+                          (Math.PI * 3) / 2,
+                          Math.PI * 2,
+                        ],
+                        outputRange: [
+                          INNER_CIRCLE_RADIUS,
+                          0,
+                          -INNER_CIRCLE_RADIUS,
+                          0,
+                          INNER_CIRCLE_RADIUS,
+                        ],
+                      }),
+                    },
+                    {
+                      translateY: user.angle.interpolate({
+                        inputRange: [
+                          0,
+                          Math.PI / 2,
+                          Math.PI,
+                          (Math.PI * 3) / 2,
+                          Math.PI * 2,
+                        ],
+                        outputRange: [
+                          0,
+                          INNER_CIRCLE_RADIUS,
+                          0,
+                          -INNER_CIRCLE_RADIUS,
+                          0,
+                        ],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              <TouchableOpacity>
+                <Image
+                  source={{ uri: user.image }}
+                  style={[
+                    styles.userImage,
+                    { width: user.size, height: user.size },
+                  ]}
+                />
+                <View style={styles.userInfo}>
+                  <Text style={styles.userName}>{user.name}</Text>
+                  <Text style={styles.userDistance}>{user.distance}</Text>
+                </View>
+              </TouchableOpacity>
+            </Animated.View>
+          ))}
+        </BlurView>
+      </View>
+
+      <View style={styles.bottomActions}>
+        <TouchableOpacity style={styles.actionButton}>
+          <Ionicons name="heart" size={24} color="#FF4B6B" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.mainActionButton]}
+        >
+          <Ionicons name="chatbubble" size={32} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionButton}>
+          <Ionicons name="camera" size={24} color="#333" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    backgroundColor: '#fff',
   },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
+  backgroundCircle: {
+    position: "absolute",
+    borderRadius: 1000,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
-  statusText: {
-    fontSize: 16,
-    marginRight: 8,
+  circle1: {
+    width: width * 1.5,
+    height: width * 1.5,
+    top: -width * 0.4,
+    left: -width * 0.25,
+    backgroundColor: "rgba(255, 107, 107, 0.2)",
   },
-  statusIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  circle2: {
+    width: width * 1.3,
+    height: width * 1.3,
+    top: width * 0.2,
+    right: -width * 0.3,
+    backgroundColor: "rgba(78, 205, 196, 0.15)",
   },
-  connected: {
-    backgroundColor: '#4ade80',
+  circle3: {
+    width: width,
+    height: width,
+    bottom: -width * 0.2,
+    left: width * 0.1,
+    backgroundColor: "rgba(69, 183, 209, 0.1)",
   },
-  disconnected: {
-    backgroundColor: '#f87171',
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
   },
-  errorContainer: {
-    backgroundColor: '#fee2e2',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
+  headerText: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#fff",
+    textShadowColor: "rgba(0, 0, 0, 0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
-  errorText: {
-    color: '#dc2626',
-  },
-  usersContainer: {
+  circleContainer: {
     flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  usersTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
+  mainCircle: {
+    width: CIRCLE_SIZE,
+    height: CIRCLE_SIZE,
+    borderRadius: CIRCLE_SIZE / 2,
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.3)",
   },
-  userCard: {
-    backgroundColor: '#f3f4f6',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
+  userContainer: {
+    position: "absolute",
+    alignItems: "center",
+    left: CIRCLE_SIZE / 2 - ITEM_SIZE / 2,
+    top: CIRCLE_SIZE / 2 - ITEM_SIZE / 2,
   },
-  userText: {
-    fontSize: 16,
+  userImage: {
+    borderRadius: ITEM_SIZE / 2,
+    borderWidth: 3,
+    borderColor: "#fff",
   },
-  reconnectButton: {
-    backgroundColor: '#3b82f6',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
+  userInfo: {
+    position: "absolute",
+    bottom: -40,
+    alignItems: "center",
+    width: ITEM_SIZE * 2,
+    left: -ITEM_SIZE / 2,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+  userName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
+    textShadowColor: "rgba(0, 0, 0, 0.3)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  userDistance: {
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.8)",
+    marginTop: 2,
+  },
+  bottomActions: {
+    flexDirection: "row",
+    justifyContent: "space-evenly",
+    alignItems: "center",
+    paddingVertical: 20,
+    paddingBottom: 40,
+  },
+  actionButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  mainActionButton: {
+    width: 65,
+    height: 65,
+    borderRadius: 32.5,
+    backgroundColor: "#FF4B6B",
+    elevation: 5,
   },
 });

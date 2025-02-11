@@ -5,14 +5,11 @@ import { RateLimiter } from "limiter";
 import {
   ErrorMessage,
   LocationUpdateMessage,
-  NearbyUserMessage,
   RegisterMessage,
-  UserProximityMessage,
   WebSocketMessage,
 } from "./messages";
 
 import { PrismaClient } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
 import { GeoRadiusResponse } from "./types";
 
 class WebSocketService {
@@ -33,11 +30,38 @@ class WebSocketService {
 
     console.log(`WebSocket Server started on port ${CONFIG.WEBSOCKET_PORT}`);
   }
+
   public static getInstance(): WebSocketService {
     if (!WebSocketService.instance) {
       WebSocketService.instance = new WebSocketService();
     }
     return WebSocketService.instance;
+  }
+
+  private setupListeners() {
+    this.wss.on("connection", (ws) => {
+      console.log("Client connected");
+
+      ws.on("message", (message: WebSocket.RawData) => {
+        try {
+          const data = JSON.parse(message.toString()) as WebSocketMessage;
+          this.handleMessage(ws, data);
+        } catch (err) {
+          console.error("Error processing message:", err);
+        }
+      });
+
+      ws.on("close", () => {
+        console.log("Client disconnected");
+        this.clients.forEach((clientWs, userId) => {
+          if (clientWs === ws) {
+            this.clients.delete(userId);
+            console.log(`User ${userId} removed from tracking`);
+            this.redis.zrem("user_locations", userId);
+          }
+        });
+      });
+    });
   }
 
   private setupHeartbeat() {
@@ -59,26 +83,26 @@ class WebSocketService {
     ws.terminate();
   }
 
-  private validateLocation(latitude: number, longitude: number): boolean {
-    return (
-      latitude >= -90 &&
-      latitude <= 90 &&
-      longitude >= -180 &&
-      longitude <= -180
-    );
+  private async handleMessage(ws: WebSocket, data: WebSocketMessage) {
+    switch (data.type) {
+      case "register":
+        await this.handleRegistration(data);
+        break;
+      case "update_location":
+        await this.handleLocationUpdate(data);
+        break;
+    }
   }
 
-  private getRateLimiter(userId: string): RateLimiter {
-    if (!this.updateLimiters.has(userId)) {
-      this.updateLimiters.set(
-        userId,
-        new RateLimiter({
-          tokensPerInterval: CONFIG.MAX_UPDATE_PER_MINUTE,
-          interval: "minute",
-        })
-      );
+  private async handleRegistration(message: RegisterMessage) {
+    const { userId } = message;
+    const ws = this.clients.get(userId);
+    try {
+      if (ws) this.clients.set(userId, ws);
+      console.log(`User ${userId} Registered `);
+    } catch (err) {
+      console.error(`Failed to register user ${userId}:`, err);
     }
-    return this.updateLimiters.get(userId)!;
   }
 
   private async retryOperation<T>(
@@ -95,161 +119,7 @@ class WebSocketService {
         );
       }
     }
-    throw new Error("All retry attemps failed");
-  }
-
-  private setupListeners() {
-    this.wss.on("connection", (ws) => {
-      console.log("Client connected");
-
-      ws.on("message", (message: WebSocket.RawData) => {
-        try {
-          const data = JSON.parse(message.toString());
-          if (data.type === "register" && data.userId) {
-            this.clients.set(data.userId, ws);
-            console.log(`User ${data.userId} registered`);
-          } else {
-            this.handleMessage(ws, message);
-          }
-        } catch (err) {
-          console.error("Error processing message:", err);
-        }
-      });
-
-      ws.on("close", () => {
-        console.log("Client disconnected");
-        Array.from(this.clients.entries()).forEach(([userId, client]) => {
-          if (client === ws) {
-            this.clients.delete(userId);
-            console.log(`User ${userId} removed from tracking`);
-            // Remove from Redis when user disconnects
-            this.redis.zrem("user_locations", userId);
-          }
-        });
-      });
-    });
-  }
-
-  private async handleMessage(ws: WebSocket, rawMessage: WebSocket.RawData) {
-    try {
-      const data = JSON.parse(rawMessage.toString()) as WebSocketMessage;
-
-      switch (data.type) {
-        case "register":
-          await this.handleRegistration(data);
-          break;
-        case "update_location":
-          await this.handleLocationUpdate(data);
-          break;
-      }
-
-      if (data.type === "update_location") {
-        const { userId, latitude, longitude } = data;
-        console.log(`Location update from ${userId}`);
-
-        const userExists = await this.prisma.user.findUnique({
-          where: { id: userId },
-        });
-
-        if (!userExists) {
-          console.error(`User ${userId} not found in database`);
-          this.sendToUser(userId, {
-            type: "error",
-            message: "user not found",
-          });
-          return;
-        }
-
-        // Update Redis geospatial index
-        await this.redis.geoadd("user_locations", longitude, latitude, userId);
-
-        // Find nearby users within 10 meters
-        const nearbyUsers = await this.redis.georadius(
-          "user_locations",
-          longitude,
-          latitude,
-          10,
-          "m"
-        );
-
-        // Process nearby users
-        const otherUsers = nearbyUsers
-          .map((id) => id as string)
-          .filter((id) => id !== userId);
-
-        if (otherUsers.length > 0) {
-          console.log(`Found ${otherUsers.length} nearby users for ${userId}`);
-
-          // Notify current user about others
-          this.sendToUser(userId, {
-            type: "nearby_users",
-            users: otherUsers,
-            yourLocation: { latitude, longitude },
-          });
-
-          // Notify other users about current user
-          otherUsers.forEach((otherUserId: string) => {
-            this.sendToUser(otherUserId, {
-              type: "user_entered_proximity",
-              userId,
-              location: { latitude, longitude },
-            });
-          });
-        }
-
-        try {
-          // Update database if significant movement
-          const lastLocation = await this.prisma.location.findUnique({
-            where: { userId },
-          });
-
-          const shouldUpdate =
-            !lastLocation ||
-            this.hasMovedSignificantly(
-              lastLocation
-                ? {
-                    latitude: parseFloat(lastLocation.latitude.toString()),
-                    longitude: parseFloat(lastLocation.longitude.toString()),
-                  }
-                : null,
-              latitude,
-              longitude
-            );
-
-          if (shouldUpdate) {
-            await this.prisma.location.upsert({
-              where: { userId },
-              update: {
-                latitude: latitude,
-                longitude: longitude,
-                updatedAt: new Date(),
-              },
-              create: {
-                userId,
-                latitude: latitude.toString(),
-                longitude: longitude.toString(),
-              },
-            });
-            console.log(`Updated database location for ${userId}`);
-          }
-        } catch (err) {
-          console.error(`Database failed for user`);
-          this.sendToUser(userId, {
-            type: "error",
-            message: "Failed to update locaition in database",
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Error processing message:", err);
-    }
-  }
-
-  private async handleRegistration(message: RegisterMessage) {
-    const { userId } = message;
-    const ws = this.clients.get(userId);
-    if (ws) this.clients.set(userId, ws);
-    console.log(`User ${userId} Registered `);
+    throw new Error("All retry attempts failed");
   }
 
   private async handleLocationUpdate(message: LocationUpdateMessage) {
@@ -262,7 +132,7 @@ class WebSocketService {
         type: "error",
         message:
           "Rate limit exceeded. Please wait before updating location again.",
-      } as unknown as ErrorMessage);
+      } as ErrorMessage);
       return;
     }
 
@@ -270,7 +140,7 @@ class WebSocketService {
       this.sendToUser(userId, {
         type: "error",
         message: "Invalid location coordinates",
-      } as unknown as ErrorMessage);
+      } as ErrorMessage);
       return;
     }
 
@@ -285,7 +155,7 @@ class WebSocketService {
         this.sendToUser(userId, {
           type: "error",
           message: "User not found",
-        } as unknown as ErrorMessage);
+        } as ErrorMessage);
         return;
       }
 
@@ -306,66 +176,121 @@ class WebSocketService {
           (item): item is GeoRadiusResponse =>
             Array.isArray(item) && item[0] !== userId
         )
-        .map((item: GeoRadiusResponse) => item[0]);
+        .map((item: GeoRadiusResponse) => ({
+          id: item[0],
+          distance: parseFloat(item[1]),
+          coordinates: item[2],
+        }));
 
-      //notifying current user
       if (otherUsers.length > 0) {
+        const userDetails = await Promise.all(
+          otherUsers.map(async (user) => {
+            const details = await this.getUserDetails(user.id);
+            return {
+              ...details,
+              distance: user.distance,
+            };
+          })
+        );
+
         this.sendToUser(userId, {
           type: "nearby_users",
-          users: otherUsers,
+          users: userDetails
+            .filter((u): u is NonNullable<typeof u> => u !== null)
+            .map((user) => ({
+              id: user.id || "",
+              name: user.username || "Unknown",
+              image: user.image || "",
+              distance: user.distance,
+            })),
           yourLocation: { latitude, longitude },
-        } as unknown as NearbyUserMessage);
+        });
 
-        // Notifying other users
-        otherUsers.forEach((otherUserId: string) => {
+        otherUsers.forEach((otherUser) => {
+          const otherUserId = otherUser.id;
           this.sendToUser(otherUserId, {
             type: "user_entered_proximity",
             userId,
             location: { latitude, longitude },
-          } as unknown as UserProximityMessage);
+          });
         });
       }
 
-      await this.updateDatabaseLocation(userId, latitude, longitude);
-    } catch (error) {
+      const lastLocation = await this.prisma.location.findUnique({
+        where: { userId },
+      });
+
+      const shouldUpdate =
+        !lastLocation ||
+        this.hasMovedSignificantly(
+          lastLocation
+            ? {
+                latitude: parseFloat(lastLocation.latitude.toString()),
+                longitude: parseFloat(lastLocation.longitude.toString()),
+              }
+            : null,
+          latitude,
+          longitude
+        );
+
+      if (shouldUpdate) {
+        await this.prisma.location.upsert({
+          where: { userId },
+          update: {
+            latitude: latitude,
+            longitude: longitude,
+            updatedAt: new Date(),
+          },
+          create: {
+            userId,
+            latitude: latitude.toString(),
+            longitude: longitude.toString(),
+          },
+        });
+        console.log(`Updated database location for ${userId}`);
+      }
+    } catch (err) {
+      console.error(`Database failed for user`);
       this.sendToUser(userId, {
         type: "error",
-        message: "Server error occurred while processing location",
-      } as unknown as ErrorMessage);
+        message: "Failed to update location in database",
+      });
     }
   }
 
-  private async updateDatabaseLocation(
-    userId: string,
-    latitude: number,
-    longitude: number
-  ) {
-    try {
-      const existingLocation = await this.prisma.location.findUnique({
-        where: { userId },
-      });
-      if (existingLocation) {
-        await this.prisma.location.update({
-          where: { userId },
-          data: {
-            latitude: new Decimal(latitude),
-            longitude: new Decimal(longitude),
-            //updatedAt wull automically updated by prisma
-          },
-        });
-      } else {
-        await this.prisma.location.create({
-          data: {
-            userId,
-            latitude: new Decimal(latitude),
-            longitude: new Decimal(longitude),
-          },
-        });
-      }
-    } catch (error) {
-      console.error("Error updating location in database:", error);
-      throw new Error("Failed to update location in database");
+  private getRateLimiter(userId: string): RateLimiter {
+    if (!this.updateLimiters.has(userId)) {
+      this.updateLimiters.set(
+        userId,
+        new RateLimiter({
+          tokensPerInterval: CONFIG.MAX_UPDATE_PER_MINUTE,
+          interval: "minute",
+        })
+      );
     }
+    return this.updateLimiters.get(userId)!;
+  }
+
+  private async getUserDetails(userId: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          image: true,
+        },
+      });
+      return user;
+    } catch (err) {
+      console.error("Error fetching user details:", err);
+    }
+  }
+
+  private validateLocation(latitude: number, longitude: number): boolean {
+    return (
+      latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+    );
   }
 
   private sendToUser(userId: string, message: any) {
@@ -390,7 +315,7 @@ class WebSocketService {
       newLat,
       newLon
     );
-    return distance > 50;
+    return distance > CONFIG.SIGNIFICANT_MOVEMENT_METERS;
   }
 
   private haversineDistance(

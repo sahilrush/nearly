@@ -12,17 +12,20 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
 model User {
-  id       String   @id @default(uuid())
-  username String   @unique  // Remove default("default_username")
-  email    String   @unique
-  password String  
+  id       String    @id @default(uuid())
+  username String    @unique
+  email    String    @unique
+  password String
+  image    String?   @default("https://example.com/default-avatar.png")
   location Location?
 
   createdAt DateTime @default(now())
 }
+
 model Location {
-  userId    String  @id @default(uuid())  // Use userId as primary key
+  userId    String   @id @default(uuid())
   latitude  Decimal
   longitude Decimal
   updatedAt DateTime @updatedAt
