@@ -1,7 +1,3 @@
-
-export const WS_URL= 'ws://localhost:8080'
-
-
 export interface LocationUpdate {
   type: "update_location";
   userId: string;
@@ -14,12 +10,12 @@ export interface NearbyUsers {
   users: string[];
   yourLocation: {
     latitude: number;
-    longigude: number;
+    longitude: number;
   };
 }
 
 export interface UserProximity {
-  type: "user_enetered_proxmity";
+  type: "user_entered_proximity";
   userId: string;
   location: {
     latitude: number;

@@ -5,7 +5,8 @@ import { useNavigation } from "expo-router";
 interface AuthContextType {
   isAuthenticated: boolean;
   token: string | null;
-  login: (token: string) => Promise<void>;
+  userId: string | null;
+  login: (token: string, userId: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -16,6 +17,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     // Check for existing token on app load
@@ -25,8 +27,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const checkAuthStatus = async () => {
     try {
       const storedToken = await AsyncStorage.getItem("userToken");
-      if (storedToken) {
+      const storedUserId = await AsyncStorage.getItem("userId");
+      if (storedToken || storedUserId) {
         setToken(storedToken);
+        setUserId(storedToken);
         setIsAuthenticated(true);
       }
     } catch (error) {
@@ -34,10 +38,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const login = async (newToken: string) => {
+  const login = async (newToken: string, newUserId: string) => {
     try {
       await AsyncStorage.setItem("userToken", newToken);
+      await AsyncStorage.setItem("userId", newUserId);
       setToken(newToken);
+      setUserId(userId);
       setIsAuthenticated(true);
     } catch (error) {
       console.error("Error during login:", error);
@@ -47,7 +53,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const logout = async () => {
     try {
       await AsyncStorage.removeItem("userToken");
+      await AsyncStorage.removeItem("userId");
       setToken(null);
+      setUserId(null);
       setIsAuthenticated(false);
     } catch (error) {
       console.error("Error during logout:", error);
@@ -55,7 +63,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, token, login, logout }}>
+    <AuthContext.Provider
+      value={{ isAuthenticated, token, userId, login, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
