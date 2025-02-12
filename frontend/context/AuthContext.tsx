@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useNavigation } from "expo-router";
+import { useNavigation, router } from "expo-router";
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -38,15 +38,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const login = async (newToken: string, newUserId: string) => {
+  const login = async (token: string, userId: string) => {
     try {
-      await AsyncStorage.setItem("userToken", newToken);
-      await AsyncStorage.setItem("userId", newUserId);
-      setToken(newToken);
+      if (!token || !userId) {
+        console.log("Token:", token, "UserId:", userId); // Debug log
+        throw new Error("Token and userId are required");
+      }
+
+      await AsyncStorage.setItem("userToken", token);
+      await AsyncStorage.setItem("userId", userId);
+      setToken(token);
       setUserId(userId);
       setIsAuthenticated(true);
+      router.replace("/(tabs)");
     } catch (error) {
       console.error("Error during login:", error);
+      throw error;
     }
   };
 

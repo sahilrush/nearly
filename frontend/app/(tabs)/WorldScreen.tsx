@@ -1,27 +1,24 @@
+// frontend/app/(tabs)/WorldScreen.tsx
+
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { useState, useEffect, useRef } from "react";
+import { UserCard } from "@/components/UserCard";
 import {
   View,
   Text,
   StyleSheet,
-  Image,
   Dimensions,
   TouchableOpacity,
-  Animated,
   FlatList,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
-import { useAuth } from "@/context/AuthContext";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import WebSocketClient from "@/utils/WebsocketClient";
 
 const { width } = Dimensions.get("window");
 const CIRCLE_SIZE = width * 0.85;
-const ITEM_SIZE = 60;
-const PROXIMITY_RADIUS = CIRCLE_SIZE / 2;
 
 interface User {
   id: string;
@@ -31,38 +28,58 @@ interface User {
   angle: number;
 }
 
-export default function World() {
-  const { logout, userId } = useAuth();
+export default function WorldScreen() {
   const [users, setUsers] = useState<User[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8000");
+    // Add error handling and logging
+    try {
+      console.log("Connecting to WebSocket...");
+      wsRef.current = new WebSocket("ws://localhost:8080");
+      const ws = wsRef.current;
 
-    ws.onopen = () => {
-      console.log("Connected to WebSocket");
-      ws.send(
-        JSON.stringify({ type: "getUserDetails", userId: "your-user-id" })
-      );
-    };
+      ws.onopen = () => {
+        console.log("WebSocket Connected");
+        ws.send(JSON.stringify({ type: "getUserDetails" }));
+      };
 
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
+      ws.onmessage = (event) => {
+        console.log("Received message:", event.data);
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "nearby_users") {
+            const nearbyUsers = message.users.filter(
+              (user: User) => user.distance <= 10
+            );
+            console.log("Nearby users:", nearbyUsers);
+            setUsers(nearbyUsers);
+          } else if (message.type === "error") {
+            console.error("WebSocket error:", message.message);
+          }
+        } catch (error) {
+          console.error("Error parsing message:", error);
+        }
+      };
 
-      if (message.type === "nearby_users") {
-        setUsers(message.users);
-      } else if (message.type === "error") {
-        console.error(message.message);
-      }
-    };
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+      };
 
-    ws.onclose = () => {
-      console.log("WebSocket connection closed");
-    };
+      ws.onclose = () => {
+        console.log("WebSocket connection closed");
+      };
 
-    return () => {
-      ws.close();
-    };
+      return () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      };
+    } catch (error) {
+      console.error("Error setting up WebSocket:", error);
+    }
   }, []);
+
   const handleLogout = async () => {
     await AsyncStorage.removeItem("userToken");
     router.replace("/auth");
@@ -77,71 +94,42 @@ export default function World() {
         end={{ x: 1, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
+
       <View style={styles.header}>
         <Ionicons name="menu" size={24} color="#fff" />
         <Text style={styles.headerText}>People Nearby</Text>
         <Ionicons name="notifications-outline" size={24} color="#fff" />
       </View>
-      <TouchableOpacity style={styles.actionButton} onPress={handleLogout}>
-        <Text>Logout</Text>
-      </TouchableOpacity>
+
       <View style={styles.circleContainer}>
         <BlurView intensity={40} tint="dark" style={styles.mainCircle}>
           <FlatList
             data={users}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
-              <Animated.View
-                style={[
-                  styles.userContainer,
-                  {
-                    transform: [
-                      {
-                        translateX:
-                          (CIRCLE_SIZE / 2 - ITEM_SIZE / 2) *
-                          Math.cos(item.angle),
-                      },
-                      {
-                        translateY:
-                          (CIRCLE_SIZE / 2 - ITEM_SIZE / 2) *
-                          Math.sin(item.angle),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <Image source={{ uri: item.image }} style={styles.userImage} />
-                <View style={styles.userInfo}>
-                  <Text style={styles.userName}>{item.username}</Text>
-                  <Text style={styles.userDistance}>
-                    {item.distance.toFixed(1)}m
-                  </Text>
-                  <View style={styles.container}>
-                    {users.map((user) => (
-                      <View key={user.id} style={styles.userCard}>
-                        <Image
-                          source={{ uri: user.image }}
-                          style={styles.userImage}
-                        />
-                        <Text style={styles.userName}>{user.username}</Text>
-                        <Text style={styles.userDistance}>
-                          {user.distance.toFixed(1)}m away
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              </Animated.View>
+              <UserCard
+                username={item.username}
+                image={item.image}
+                distance={item.distance}
+                angle={item.angle}
+              />
             )}
+            contentContainerStyle={styles.listContainer}
           />
         </BlurView>
       </View>
+
+      <TouchableOpacity style={styles.actionButton} onPress={handleLogout}>
+        <Text style={styles.actionButtonText}>Logout</Text>
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: {
+    flex: 1,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -150,27 +138,45 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingBottom: 20,
   },
-  headerText: { fontSize: 22, fontWeight: "bold", color: "#fff" },
-  circleContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  headerText: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#fff",
+  },
+  circleContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   mainCircle: {
     width: CIRCLE_SIZE,
     height: CIRCLE_SIZE,
     borderRadius: CIRCLE_SIZE / 2,
-    justifyContent: "center",
-    alignItems: "center",
+    overflow: "hidden",
   },
-  userInfo: { position: "absolute", bottom: -30, alignItems: "center" },
+  listContainer: {
+    padding: 20,
+  },
   actionButton: {
     position: "absolute",
     bottom: 40,
     alignSelf: "center",
-    padding: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     backgroundColor: "white",
     borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
-  userContainer: { flex: 1, padding: 20 },
-  userCard: { marginBottom: 20, alignItems: "center" },
-  userImage: { width: 100, height: 100, borderRadius: 50 },
-  userName: { fontSize: 18, fontWeight: "bold", marginTop: 10 },
-  userDistance: { fontSize: 14, color: "gray" },
+  actionButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#FF4B6B",
+  },
 });
