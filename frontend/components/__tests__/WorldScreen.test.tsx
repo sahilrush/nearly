@@ -21,6 +21,7 @@ jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock")
 );
 
+// Create a mock WebSocket class
 class MockWebSocket {
   onopen: ((ev: any) => void) | null = null;
   onmessage: ((ev: any) => void) | null = null;
@@ -73,16 +74,17 @@ class MockWebSocket {
   }
 }
 
+// Mock the global WebSocket
 global.WebSocket = MockWebSocket as any;
 
 describe("WorldScreen", () => {
   beforeEach(() => {
-    MockWebSocket.instances = [];
+    MockWebSocket.instances = []; // Clear instances
   });
 
   afterEach(() => {
     jest.clearAllMocks();
-
+    // Close any open WebSocket connections
     MockWebSocket.instances.forEach((ws) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.close();
@@ -97,8 +99,10 @@ describe("WorldScreen", () => {
       </AuthProvider>
     );
 
+    // Initial render check
     expect(getByText("People Nearby")).toBeTruthy();
 
+    // Wait for users to be displayed
     await waitFor(
       () => {
         expect(getByText("John Doe")).toBeTruthy();

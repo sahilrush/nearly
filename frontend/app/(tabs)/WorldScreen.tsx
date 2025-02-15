@@ -16,6 +16,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { WS_URL } from "@/config";
 
 const { width } = Dimensions.get("window");
 const CIRCLE_SIZE = width * 0.85;
@@ -36,7 +37,7 @@ export default function WorldScreen() {
     // Add error handling and logging
     try {
       console.log("Connecting to WebSocket...");
-      wsRef.current = new WebSocket("ws://localhost:8080");
+      wsRef.current = new WebSocket(WS_URL);
       const ws = wsRef.current;
 
       ws.onopen = () => {
@@ -118,10 +119,6 @@ export default function WorldScreen() {
           />
         </BlurView>
       </View>
-
-      <TouchableOpacity style={styles.actionButton} onPress={handleLogout}>
-        <Text style={styles.actionButtonText}>Logout</Text>
-      </TouchableOpacity>
     </View>
   );
 }

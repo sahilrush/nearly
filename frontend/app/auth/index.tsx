@@ -11,6 +11,7 @@ import {
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useAuth } from "@/context/AuthContext";
 import { SignupData } from "@/types/auth";
+import { API_URL } from "@/config";
 
 type RootStackParamList = {
   Auth: undefined;
@@ -37,22 +38,27 @@ const AuthScreen: React.FC<Props> = ({ navigation }) => {
     password: "",
   });
 
-  const API_URL: string = "http://localhost:3000";
-
   const handleAuth = async () => {
     try {
       setIsLoading(true);
-      console.log("Attempting to sign in...");
-
       const endpoint = isLogin ? "/auth/signin" : "/auth/signup";
+      console.log("Attempting to sign in...");
+      console.log("Using API URL:", `${API_URL}${endpoint}`);
+
       const userData = isLogin
         ? { email: formData.email, password: formData.password }
         : formData;
 
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify(userData),
+      }).catch((error) => {
+        console.error("Fetch error details:", error);
+        throw error;
       });
 
       const data = await response.json();
@@ -60,21 +66,42 @@ const AuthScreen: React.FC<Props> = ({ navigation }) => {
 
       if (response.ok) {
         if (isLogin && data.token) {
-          console.log("Logging in...");
-          const tokenParts = data.token.split(".");
-          const payload = JSON.parse(atob(tokenParts[1]));
-          await auth.login(data.token, payload.userId);
+          console.log("Logging in with token:", data.token);
+          try {
+            // Extract userId from token without using atob
+            const tokenParts = data.token.split(".");
+            const base64Url = tokenParts[1];
+            const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+            const jsonPayload = decodeURIComponent(
+              atob(base64)
+                .split("")
+                .map(
+                  (c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)
+                )
+                .join("")
+            );
+            const payload = JSON.parse(jsonPayload);
+
+            if (!payload.userId) {
+              throw new Error("No userId in token payload");
+            }
+
+            await auth.login(data.token, payload.userId);
+          } catch (error) {
+            console.error("Token parsing error:", error);
+            Alert.alert("Error", "Invalid token format");
+          }
         } else if (!isLogin) {
           Alert.alert("Success", "Account created! Please sign in.");
           setIsLogin(true);
           setFormData({ username: "", email: "", password: "" });
         }
       } else {
-        Alert.alert("Error", data.message);
+        Alert.alert("Error", data.message || "Authentication failed");
       }
     } catch (error) {
       console.error("Auth error:", error);
-      Alert.alert("Error", "Something went wrong. Please try again.");
+      Alert.alert("Error", "Network or server error. Please try again.");
     } finally {
       setIsLoading(false);
     }

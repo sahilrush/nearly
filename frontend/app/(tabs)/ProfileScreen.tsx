@@ -11,6 +11,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { API_URL } from "@/config";
 
 interface UserProfile {
   username: string;
@@ -31,7 +32,7 @@ export default function Profile() {
 
   const fetchUserProfile = async () => {
     try {
-      const response = await fetch(`http://localhost:3000/users/${userId}`);
+      const response = await fetch(`${API_URL}/users/${userId}`);
       const data = await response.json();
       setProfile(data);
     } catch (error) {
